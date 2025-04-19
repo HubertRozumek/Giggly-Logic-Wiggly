@@ -28,6 +28,24 @@ impl Circuit {
         self.outputs.push(id.into());
     }
 
+    pub fn set_input_signal(&mut self, gate_id: &str, signal: bool) -> Result<(), String>{
+            if let Some(gate) = self.gates.get(gate_id) {
+                let mut gate_ref = gate.borrow_mut();
+                let any_gate = gate_ref.as_any();
+
+                if let Some(input_gate) = any_gate.downcast_mut::<InputGate>() {
+                    input_gate.set_signal(signal);
+                    Ok(())
+                } else {
+                    Err(format!("Gate '{}' is not an InputGate", gate_id))
+                }
+
+            } else {
+                Err(format!("Gate '{}' not found", gate_id))
+            }
+        }
+    
+
     pub fn eval(&self) -> HashMap<String, bool> {
         let mut result = HashMap::new();
 
@@ -51,9 +69,12 @@ impl Circuit {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
 }
 
-use crate::circuit::gate::{ConstGate}; 
+use crate::circuit::gate::{ConstGate};
+
+use super::gate::InputGate; 
 
 #[cfg(test)]
 
@@ -75,6 +96,25 @@ mod tests{
 
         let desc = circuit.description();
         assert_eq!(desc, "A => Const true")
+
+    }
+
+    #[test]
+
+    fn test_set_input_signal(){
+        let mut circuit = Circuit::new();
+
+        let input_gate = Rc::new(RefCell::new(InputGate::new(false)));
+        circuit.add_gate("i1", input_gate.clone());
+        circuit.add_output("i1");
+
+        assert_eq!(circuit.eval().get("i1"),Some(&false));
+
+        circuit.set_input_signal("i1", true).unwrap();
+        assert_eq!(circuit.eval().get("i1"), Some(&true));
+
+        let err = circuit.set_input_signal("i2", true);
+        assert!(err.is_err());
 
     }
 }

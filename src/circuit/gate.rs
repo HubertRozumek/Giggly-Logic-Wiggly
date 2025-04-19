@@ -1,13 +1,27 @@
 use std::rc::Rc;
 use std::{cell::RefCell, fmt::Debug};
+use std::any::Any;
+
 pub trait Gate: Debug{
     fn eval(&self) -> bool;
     fn description(&self) -> String;
+
+    fn as_any(&mut self) -> &mut dyn Any;
 }
 
 #[derive(Debug)]
 pub struct ConstGate {
     signal: bool,
+}
+
+#[derive(Debug)]
+pub struct InputGate {
+    signal: bool,
+}
+
+#[derive(Debug)]
+pub struct OutputGate {
+    input: Rc<RefCell<dyn Gate>>,
 }
 
 #[derive(Debug)]
@@ -58,6 +72,22 @@ pub struct FullAdder {
 impl ConstGate {
     pub fn new(s: bool) -> Self {
         Self {signal: s}
+    }
+}
+
+impl InputGate {
+    pub fn new(s: bool) -> Self{
+        Self {signal: s}
+    }
+
+    pub fn set_signal(&mut self, new_signal:bool) {
+        self.signal = new_signal;
+    }
+}
+
+impl OutputGate {
+    pub fn new(input_gate: Rc<RefCell<dyn Gate>>) -> Self {
+        Self {input: input_gate}
     }
 }
 
@@ -132,6 +162,38 @@ impl Gate for ConstGate{
     fn description(&self) -> String {
         format!("Const {}",self.signal)
     }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl Gate for InputGate{
+    fn eval(&self) -> bool {
+        self.signal
+    }
+
+    fn description(&self) -> String {
+        format!("Input {}",self.signal)
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl Gate for OutputGate {
+    fn eval(&self) -> bool {
+        self.input.borrow().eval()
+    }
+
+    fn description(&self) -> String {
+        format!("Output ({})",self.input.borrow().description())
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 impl Gate for AndGate {
@@ -143,6 +205,10 @@ impl Gate for AndGate {
         format!("AND({}, {})",
          self.signal_one.borrow().description(), 
          self.signal_two.borrow().description())
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -156,6 +222,10 @@ impl Gate for OrGate {
          self.signal_one.borrow().description(), 
          self.signal_two.borrow().description())
     }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 impl Gate for NotGate {
@@ -166,6 +236,10 @@ impl Gate for NotGate {
     fn description(&self) -> String{
         format!("NOT({})",
         self.signal.borrow().description())
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -179,6 +253,10 @@ impl Gate for XorGate {
         self.signal_one.borrow().description(),
         self.signal_two.borrow().description())
     }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 impl Gate for NorGate {
@@ -191,6 +269,10 @@ impl Gate for NorGate {
         self.signal_one.borrow().description(),
         self.signal_two.borrow().description())
     }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 impl Gate for NandGate {
@@ -202,6 +284,10 @@ impl Gate for NandGate {
         format!("Nand({},{})",
         self.signal_one.borrow().description(),
         self.signal_two.borrow().description())
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -293,6 +379,23 @@ mod tests {
         assert_eq!(fa.carry.borrow().eval(), true);
     }
 
+    #[test]
+    fn test_input_gate(){
+        let mut input_gate = InputGate::new(false);
+        assert_eq!(input_gate.eval(),false);
+
+        input_gate.set_signal(true);
+        assert_eq!(input_gate.eval(),true);
+    }
+
+    #[test]
+    fn test_op_gate(){
+        let input_gate = Rc::new(RefCell::new(ConstGate::new(true)));
+        let output_gate = OutputGate::new(input_gate.clone());
+
+        assert_eq!(output_gate.eval(),true);
+        assert_eq!(output_gate.description(),"Output (Const true)")
+    }
     
 }
 
