@@ -2,12 +2,23 @@ use std::rc::Rc;
 use std::{cell::RefCell, fmt::Debug};
 use std::any::Any;
 
+
+
+// trait implementation
+
+
+
 pub trait Gate: Debug{
     fn eval(&self) -> bool;
     fn description(&self) -> String;
 
     fn as_any(&mut self) -> &mut dyn Any;
 }
+
+
+// gates structs
+
+
 
 #[derive(Debug)]
 pub struct ConstGate {
@@ -59,15 +70,50 @@ pub struct NotGate{
     signal: Rc<RefCell<dyn Gate>>,
 }
 
+#[derive(Debug)]
 pub struct HalfAdder {
     pub sum: Rc<RefCell<dyn Gate>>,
     pub carry: Rc<RefCell<dyn Gate>>,
 }
 
+#[derive(Debug)]
 pub struct FullAdder {
     pub sum: Rc<RefCell<dyn Gate>>,
     pub carry: Rc<RefCell<dyn Gate>>,
 }
+
+#[derive(Debug)]
+pub struct SRLatch {
+    set: Rc<RefCell<dyn Gate>>,
+    reset: Rc<RefCell<dyn Gate>>,
+    last_q: RefCell<bool>,
+}
+
+#[derive(Debug)]
+pub struct Dlatch {
+    d: Rc<RefCell<dyn Gate>>,
+    enable: Rc<RefCell<dyn Gate>>,
+    state: RefCell<bool>,
+}
+
+#[derive(Debug)]
+pub struct Dflipflop {
+    d: Rc<RefCell<dyn Gate>>,
+    clk: Rc<RefCell<dyn Gate>>,
+    state: RefCell<bool>,
+    last_clk: RefCell<bool>,
+}
+
+#[derive(Debug)]
+pub struct ClockGate{
+    state: RefCell<bool>,
+}
+
+
+
+// Constructors
+
+
 
 impl ConstGate {
     pub fn new(s: bool) -> Self {
@@ -153,6 +199,40 @@ impl FullAdder {
         }
     }
 }
+
+impl SRLatch{
+    pub fn new(set: Rc<RefCell<dyn Gate>>, reset: Rc<RefCell<dyn Gate>>) -> Self {
+        Self { set: (set), reset: (reset), last_q: (RefCell::new(false)) }
+    }
+}
+
+impl Dlatch {
+    pub fn new(d: Rc<RefCell<dyn Gate>>, enable: Rc<RefCell<dyn Gate>>) -> Self {
+        Self { d: (d), enable: (enable), state: (RefCell::new(false)) }
+    }
+}
+
+impl Dflipflop {
+    pub fn new(d: Rc<RefCell<dyn Gate>>, clk: Rc<RefCell<dyn Gate>>) -> Self {
+        Self { d: (d), clk: (clk), state: (RefCell::new(false)), last_clk: (RefCell::new(false)) }
+    }
+}
+
+impl ClockGate {
+    pub fn new() -> Self {
+        Self { state: RefCell::new(false) }
+    }
+
+    pub fn tick(&self) {
+        let mut state = self.state.borrow_mut();
+        *state = !*state;
+    }
+}
+
+
+// gate implementation 
+
+
 
 impl Gate for ConstGate{
     fn eval(&self) -> bool {
@@ -291,6 +371,111 @@ impl Gate for NandGate {
     }
 }
 
+impl Gate for SRLatch {
+    fn eval(&self) -> bool {
+        let s = self.set.borrow().eval();
+        let r = self.reset.borrow().eval();
+
+        let new_q = match (s, r) {
+            (true, false) => true,
+            (false, true) => false,
+            (false, false) => *self.last_q.borrow(),
+            (true, true) => {
+                *self.last_q.borrow()
+            }
+        };
+
+        *self.last_q.borrow_mut() = new_q;
+        new_q
+    }
+
+    fn description(&self) -> String {
+        format!(
+            "SRLatch(Set: {}, Reset: {}, Q: {})",
+            self.set.borrow().description(),
+            self.reset.borrow().description(),
+            self.last_q.borrow()
+        )
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl Gate for Dlatch {
+    fn eval(&self) -> bool {
+        if self.enable.borrow().eval(){
+            let value = self.d.borrow().eval();
+            *self.state.borrow_mut() = value;
+        }
+        *self.state.borrow()
+    }
+
+    fn description(&self) -> String {
+        format!(
+            "DLatch(Set: {}, Reset: {}, Q: {})",
+            self.d.borrow().description(),
+            self.enable.borrow().description(),
+            self.state.borrow()
+        )
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl Gate for Dflipflop {
+    fn eval(&self) -> bool {
+        let clk_val = self.clk.borrow().eval();
+        let last_clk = *self.last_clk.borrow();
+
+        if !last_clk && clk_val {
+            let d = self.d.borrow().eval();
+            *self.state.borrow_mut() = d;
+        }
+
+        *self.last_clk.borrow_mut() = clk_val;
+        *self.state.borrow()
+    }
+
+    fn description(&self) -> String {
+        format!(
+            "DFlipFlop(D: {}, CLK: {}, Q: {})",
+            self.d.borrow().description(),
+            self.clk.borrow().description(),
+            self.state.borrow()
+        )
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl Gate for ClockGate {
+    fn eval(&self) -> bool {
+        
+        *self.state.borrow()
+    }
+
+    fn description(&self) -> String {
+        format!(
+            "Clock({})",
+            self.state.borrow()
+        )
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+// Tests
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,5 +582,88 @@ mod tests {
         assert_eq!(output_gate.description(),"Output (Const true)")
     }
     
+    #[test]
+    fn test_srlatch(){
+        let set = Rc::new(RefCell::new(ConstGate::new(false)));
+        let reset = Rc::new(RefCell::new(ConstGate::new(false)));
+
+        let latch = SRLatch::new(set.clone(),reset.clone());
+
+        assert_eq!(latch.eval(), false);
+
+        set.borrow_mut().signal = true;
+        reset.borrow_mut().signal = false;
+        assert_eq!(latch.eval(), true);
+
+        set.borrow_mut().signal = false;
+        assert_eq!(latch.eval(),true);
+
+        reset.borrow_mut().signal = true;
+        assert_eq!(latch.eval(), false);
+
+        set.borrow_mut().signal = true;
+        assert_eq!(latch.eval(), false)
+    }
+
+    #[test]
+    fn test_dlatch(){
+        let d = Rc::new(RefCell::new(ConstGate::new(false)));
+        let enable = Rc::new(RefCell::new(ConstGate::new(false)));
+
+        let latch = Dlatch::new(d.clone(), enable.clone());
+
+        assert_eq!(latch.eval(), false);
+
+        d.borrow_mut().signal = true;
+        enable.borrow_mut().signal = true;
+        assert_eq!(latch.eval(),true);
+
+        d.borrow_mut().signal = false;
+        enable.borrow_mut().signal = false;
+        assert_eq!(latch.eval(),true);
+
+        enable.borrow_mut().signal = true;
+        assert_eq!(latch.eval(),false);
+    }
+
+    #[test]
+    fn test_d_flip_flop() {
+        let d = Rc::new(RefCell::new(InputGate::new(false)));
+        let clk = Rc::new(RefCell::new(InputGate::new(false)));
+
+        let ff = Dflipflop::new(d.clone(), clk.clone());
+
+        assert_eq!(ff.eval(), false);
+
+        {
+            d.borrow_mut().set_signal(true);
+            clk.borrow_mut().set_signal(true);
+        }
+        assert_eq!(ff.eval(), true);
+
+        {
+            d.borrow_mut().set_signal(false);
+            clk.borrow_mut().set_signal(false);
+        }
+        ff.eval();
+
+        {
+        clk.borrow_mut().set_signal(true);
+        }
+        assert_eq!(ff.eval(), false);
+    }
+
+    #[test]
+    fn test_clock() {
+        let clk = ClockGate::new();
+        assert_eq!(clk.eval(),false);
+        
+        clk.tick();
+        assert_eq!(clk.eval(), true);
+
+        clk.tick();
+        assert_eq!(clk.eval(), false);
+    }
+
 }
 
