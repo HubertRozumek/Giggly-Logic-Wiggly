@@ -1,3 +1,4 @@
+#[warn(unused_imports)]
 use crate::circuit::netlist::{GateKind, NetList};
 #[test]
 fn const_and_not() {

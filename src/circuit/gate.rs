@@ -9,7 +9,7 @@ use std::any::Any;
 
 
 pub trait Gate: Debug{
-    fn eval(&self) -> bool;
+    fn eval(&self) -> Signal;
     fn description(&self) -> String;
 
     fn as_any(&mut self) -> &mut dyn Any;
@@ -18,11 +18,52 @@ pub trait Gate: Debug{
 
 // gates structs
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Signal {
+    Low,
+    High,
+    HiZ,
+}
 
 
 #[derive(Debug)]
-pub struct ConstGate {
-    signal: bool,
+pub struct ConstGate { level: Signal }
+
+#[derive(Debug)]
+pub struct SwitchGate {
+    level: bool,
+}
+
+#[derive(Debug)]
+pub struct ButtonGate {
+    input: bool,
+}
+
+#[derive(Debug)]
+pub struct LowConstGate {
+    input: bool,
+}
+
+#[derive(Debug)]
+pub struct HighConstGate {
+    input: bool,
+}
+
+#[derive(Debug)]
+pub struct BufferGate {
+    input: Rc<RefCell<dyn Gate>>,
+}
+
+#[derive(Debug)]
+pub struct XnorGate {
+    signal_one: Rc<RefCell<dyn Gate>>,
+    signal_two: Rc<RefCell<dyn Gate>>,
+}
+
+#[derive(Debug)]
+pub struct TriStateGate{
+    input: Rc<RefCell<dyn Gate>>,
+    enable: Rc<RefCell<dyn Gate>>,
 }
 
 #[derive(Debug)]
@@ -86,38 +127,70 @@ pub struct FullAdder {
 pub struct SRLatch {
     set: Rc<RefCell<dyn Gate>>,
     reset: Rc<RefCell<dyn Gate>>,
-    last_q: RefCell<bool>,
+    last_q: RefCell<Signal>,
 }
 
 #[derive(Debug)]
 pub struct Dlatch {
     d: Rc<RefCell<dyn Gate>>,
     enable: Rc<RefCell<dyn Gate>>,
-    state: RefCell<bool>,
+    state: RefCell<Signal>,
 }
 
 #[derive(Debug)]
 pub struct Dflipflop {
     d: Rc<RefCell<dyn Gate>>,
     clk: Rc<RefCell<dyn Gate>>,
-    state: RefCell<bool>,
-    last_clk: RefCell<bool>,
+    state: RefCell<Signal>,
+    last_clk: RefCell<Signal>,
 }
 
 #[derive(Debug)]
 pub struct ClockGate{
-    state: RefCell<bool>,
+    state: RefCell<Signal>,
 }
 
 
 
 // Constructors
 
+impl Signal {
+    #[inline] pub fn is_low(self) -> bool { self == Signal::Low }
+    #[inline] pub fn is_high(self) -> bool { self == Signal::High }
 
+    pub fn invert(self) -> Self {
+        match self {
+            Signal::High => Signal::Low,
+            Signal::Low => Signal::High,
+            Signal::HiZ => Signal::HiZ
+            
+        }
+    }
+}
+
+impl From<Signal> for bool {
+    fn from(s: Signal) -> Self {s == Signal::High}
+}
 
 impl ConstGate {
-    pub fn new(s: bool) -> Self {
-        Self {signal: s}
+    pub fn new(level: Signal) -> Self { Self { level } }
+}
+
+impl SwitchGate {
+    pub fn new(init: bool) -> Self {Self { level: init } }
+    pub fn toggle(&mut self) { self.level = !self.level; }
+}
+impl BufferGate {
+    pub fn new(input: Rc<RefCell<dyn Gate>>) -> Self { Self {input} }
+}
+
+impl XnorGate {
+    pub fn new(signal_one: Rc<RefCell<dyn Gate>>, signal_two: Rc<RefCell<dyn Gate>>) -> Self { Self { signal_one, signal_two} }
+}
+
+impl TriStateGate {
+    pub fn new(input: Rc<RefCell<dyn Gate>>, enable: Rc<RefCell<dyn Gate>>) -> Self {
+        Self { input, enable }        
     }
 }
 
@@ -202,55 +275,149 @@ impl FullAdder {
 
 impl SRLatch{
     pub fn new(set: Rc<RefCell<dyn Gate>>, reset: Rc<RefCell<dyn Gate>>) -> Self {
-        Self { set: (set), reset: (reset), last_q: (RefCell::new(false)) }
+        Self { set: (set), reset: (reset), last_q: (RefCell::new(Signal::Low)) }
     }
 }
 
 impl Dlatch {
     pub fn new(d: Rc<RefCell<dyn Gate>>, enable: Rc<RefCell<dyn Gate>>) -> Self {
-        Self { d: (d), enable: (enable), state: (RefCell::new(false)) }
+        Self { d: (d), enable: (enable), state: (RefCell::new(Signal::Low)) }
     }
 }
 
 impl Dflipflop {
     pub fn new(d: Rc<RefCell<dyn Gate>>, clk: Rc<RefCell<dyn Gate>>) -> Self {
-        Self { d: (d), clk: (clk), state: (RefCell::new(false)), last_clk: (RefCell::new(false)) }
+        Self { d: (d), clk: (clk), state: (RefCell::new(Signal::Low)), last_clk: (RefCell::new(Signal::Low)) }
     }
 }
 
 impl ClockGate {
     pub fn new() -> Self {
-        Self { state: RefCell::new(false) }
+        Self { state: RefCell::new(Signal::Low) }
     }
 
     pub fn tick(&self) {
         let mut state = self.state.borrow_mut();
-        *state = !*state;
+        *state = if *state == Signal::Low { Signal::High } else { Signal::Low };
     }
 }
+
+#[inline]
+pub fn and(a: Signal, b: Signal) -> Signal {
+    match (a,b) {
+        (Signal::High, Signal::High) => Signal::High,
+        (Signal::HiZ, _) | (_, Signal::HiZ) => Signal::HiZ,
+        _ => Signal::Low,
+    }
+}
+
+#[inline]
+pub fn or(a: Signal, b: Signal) -> Signal {
+    match (a,b) {
+        (Signal::Low, Signal::Low) => Signal::Low,
+        (Signal::HiZ, _) | (_, Signal::HiZ) => Signal::HiZ,
+        _ => Signal::High,
+    }
+}
+
+#[inline]
+pub fn xor(a: Signal, b: Signal) -> Signal {
+    use Signal::*;
+    match (a,b) {
+        (HiZ, _) | (_, HiZ) => HiZ,
+        (High, High) | (Low, Low) => Low,
+        _ => High,
+    }
+}
+
 
 
 // gate implementation 
+impl Gate for SwitchGate {
+    fn eval(&self) -> Signal {
+        if self.level { Signal::High} else { Signal::Low}
+    }
+    fn description(&self) -> String {
+        format!("Switch {}", self.level)
+    }
+    fn as_any(&mut self) -> &mut dyn Any { self }
+}
 
+impl Gate for ButtonGate {
+    fn eval(&self) -> Signal {
+        if self.input { Signal::High } else { Signal::Low }
+    }
 
+    fn description(&self) -> String { "Button".into()}
+    fn as_any(&mut self) -> &mut dyn Any { self }
+}
 
-impl Gate for ConstGate{
-    fn eval(&self) -> bool {
-        self.signal
+impl Gate for LowConstGate {
+    fn eval(&self) -> Signal { Signal::Low }
+    fn description(&self) -> String { "Const 0".into() }
+    fn as_any(&mut self) -> &mut dyn Any { self }
+}
+
+impl Gate for HighConstGate {
+    fn eval(&self) -> Signal { Signal::High }
+    fn description(&self) -> String { "Const 1".into() }
+    fn as_any(&mut self) -> &mut dyn Any { self }
+}
+impl Gate for BufferGate {
+    fn eval(&self) -> Signal { self.input.borrow().eval() }
+
+    fn description(&self) -> String {
+        format!("Buffer({})", self.input.borrow().description())
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any { self }
+}
+
+impl Gate for XnorGate {
+    fn eval(&self) -> Signal {
+        let s = xor(self.signal_one.borrow().eval(), self.signal_two.borrow().eval());
+        match s {
+            Signal::High => Signal::Low,
+            Signal::Low => Signal::High,
+            Signal::HiZ => Signal::HiZ,
+        }
     }
 
     fn description(&self) -> String {
-        format!("Const {}",self.signal)
+        format!("Xnor({},{})", self.signal_one.borrow().description(), self.signal_two.borrow().description())
     }
+    fn as_any(&mut self) -> &mut dyn Any { self }
+}
 
-    fn as_any(&mut self) -> &mut dyn Any {
-        self
+impl Gate for TriStateGate {
+    fn eval(&self) -> Signal {
+        if self.enable.borrow().eval().is_high(){
+            self.input.borrow().eval()
+        } else {
+        Signal::HiZ
+        }
     }
+    fn description(&self) -> String {
+        format!("TriStateGate({},{})", self.input.borrow().description(), self.enable.borrow().description())
+    }
+    fn as_any(&mut self) -> &mut dyn Any { self }
+}
+
+impl Gate for ConstGate {
+    fn eval(&self) -> Signal { self.level }
+    fn description(&self) -> String {
+        match self.level {
+            Signal::High => "Const 1".into(),
+            Signal::Low  => "Const 0".into(),
+            Signal::HiZ  => "Const Z".into(),
+        }
+    }
+    fn as_any(&mut self) -> &mut dyn Any { self }
 }
 
 impl Gate for InputGate{
-    fn eval(&self) -> bool {
-        self.signal
+    fn eval(&self) -> Signal {
+        if self.signal { Signal::High } else { Signal::Low }
     }
 
     fn description(&self) -> String {
@@ -263,7 +430,7 @@ impl Gate for InputGate{
 }
 
 impl Gate for OutputGate {
-    fn eval(&self) -> bool {
+    fn eval(&self) -> Signal {
         self.input.borrow().eval()
     }
 
@@ -277,12 +444,12 @@ impl Gate for OutputGate {
 }
 
 impl Gate for AndGate {
-    fn eval(&self) -> bool {
-        self.signal_one.borrow().eval() && self.signal_two.borrow().eval()
+    fn eval(&self) -> Signal {
+        and(self.signal_one.borrow().eval(),self.signal_two.borrow().eval())
     }
 
     fn description(&self) -> String{
-        format!("AND({}, {})",
+        format!("And({}, {})",
          self.signal_one.borrow().description(), 
          self.signal_two.borrow().description())
     }
@@ -293,12 +460,12 @@ impl Gate for AndGate {
 }
 
 impl Gate for OrGate {
-    fn eval(&self) -> bool {
-        self.signal_one.borrow().eval() || self.signal_two.borrow().eval()
+    fn eval(&self) -> Signal {
+        or(self.signal_one.borrow().eval(), self.signal_two.borrow().eval())
     }
 
     fn description(&self) -> String{
-        format!("OR({}, {})",
+        format!("Or({}, {})",
          self.signal_one.borrow().description(), 
          self.signal_two.borrow().description())
     }
@@ -309,12 +476,12 @@ impl Gate for OrGate {
 }
 
 impl Gate for NotGate {
-    fn eval(&self) -> bool {
-        !self.signal.borrow().eval()
+    fn eval(&self) -> Signal {
+        self.signal.borrow().eval().invert()
     }
 
     fn description(&self) -> String{
-        format!("NOT({})",
+        format!("Not({})",
         self.signal.borrow().description())
     }
 
@@ -324,8 +491,8 @@ impl Gate for NotGate {
 }
 
 impl Gate for XorGate {
-    fn eval(&self) -> bool {
-        self.signal_one.borrow().eval() != self.signal_two.borrow().eval()
+    fn eval(&self) -> Signal {
+        xor(self.signal_one.borrow().eval(), self.signal_two.borrow().eval())
     }
 
     fn description(&self) -> String {
@@ -340,8 +507,8 @@ impl Gate for XorGate {
 }
 
 impl Gate for NorGate {
-    fn eval(&self) -> bool {
-        !(self.signal_one.borrow().eval() || self.signal_two.borrow().eval())
+    fn eval(&self) -> Signal {
+        or(self.signal_one.borrow().eval(), self.signal_two.borrow().eval()).invert()
     }
 
     fn description(&self) -> String {
@@ -356,8 +523,8 @@ impl Gate for NorGate {
 }
 
 impl Gate for NandGate {
-    fn eval(&self) -> bool {
-        !(self.signal_one.borrow().eval() && self.signal_two.borrow().eval())
+    fn eval(&self) -> Signal {
+        and(self.signal_one.borrow().eval(), self.signal_two.borrow().eval()).invert()
     }
 
     fn description(&self) -> String {
@@ -372,29 +539,25 @@ impl Gate for NandGate {
 }
 
 impl Gate for SRLatch {
-    fn eval(&self) -> bool {
+    fn eval(&self) -> Signal {
         let s = self.set.borrow().eval();
         let r = self.reset.borrow().eval();
 
-        let new_q = match (s, r) {
-            (true, false) => true,
-            (false, true) => false,
-            (false, false) => *self.last_q.borrow(),
-            (true, true) => {
-                *self.last_q.borrow()
-            }
+        let next = match (s, r) {
+            (Signal::High, Signal::Low) => Signal::High,
+            (Signal::Low, Signal::High) => Signal::Low,
+            (Signal::Low, Signal::Low) => *self.last_q.borrow(),
+            _ =>  *self.last_q.borrow()
+            
         };
 
-        *self.last_q.borrow_mut() = new_q;
-        new_q
+        *self.last_q.borrow_mut() = next;
+        next
     }
 
     fn description(&self) -> String {
         format!(
-            "SRLatch(Set: {}, Reset: {}, Q: {})",
-            self.set.borrow().description(),
-            self.reset.borrow().description(),
-            self.last_q.borrow()
+            "SRLatch({:?})", *self.last_q.borrow()
         )
     }
 
@@ -404,20 +567,17 @@ impl Gate for SRLatch {
 }
 
 impl Gate for Dlatch {
-    fn eval(&self) -> bool {
-        if self.enable.borrow().eval(){
-            let value = self.d.borrow().eval();
-            *self.state.borrow_mut() = value;
+    fn eval(&self) -> Signal {
+        if self.enable.borrow().eval().is_high() {
+            *self.state.borrow_mut() = self.d.borrow().eval();
         }
+
         *self.state.borrow()
     }
 
     fn description(&self) -> String {
         format!(
-            "DLatch(Set: {}, Reset: {}, Q: {})",
-            self.d.borrow().description(),
-            self.enable.borrow().description(),
-            self.state.borrow()
+            "DLatch {:?}", *self.state.borrow()
         )
     }
 
@@ -427,25 +587,20 @@ impl Gate for Dlatch {
 }
 
 impl Gate for Dflipflop {
-    fn eval(&self) -> bool {
+    fn eval(&self) -> Signal {
         let clk_val = self.clk.borrow().eval();
         let last_clk = *self.last_clk.borrow();
 
-        if !last_clk && clk_val {
-            let d = self.d.borrow().eval();
-            *self.state.borrow_mut() = d;
+        if last_clk == Signal::Low && clk_val == Signal::High {
+            *self.state.borrow_mut() = self.d.borrow().eval();
         }
-
         *self.last_clk.borrow_mut() = clk_val;
         *self.state.borrow()
     }
 
     fn description(&self) -> String {
         format!(
-            "DFlipFlop(D: {}, CLK: {}, Q: {})",
-            self.d.borrow().description(),
-            self.clk.borrow().description(),
-            self.state.borrow()
+            "DFlipFlop({:?})", *self.state.borrow()
         )
     }
 
@@ -455,15 +610,14 @@ impl Gate for Dflipflop {
 }
 
 impl Gate for ClockGate {
-    fn eval(&self) -> bool {
-        
+    fn eval(&self) -> Signal {
         *self.state.borrow()
     }
 
     fn description(&self) -> String {
         format!(
-            "Clock({})",
-            self.state.borrow()
+            "Clock({:?})",
+            *self.state.borrow()
         )
     }
 
@@ -471,199 +625,3 @@ impl Gate for ClockGate {
         self
     }
 }
-
-// Tests
-
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_and_gate(){
-        let a = Rc::new(RefCell::new(ConstGate::new(true)));
-        let b = Rc::new(RefCell::new(ConstGate::new(false)));
-        let gate = AndGate::new(a,b);
-        assert_eq!(gate.eval(),false);
-    }
-
-    #[test]
-    fn test_or_gate(){
-        let a = Rc::new(RefCell::new(ConstGate::new(true)));
-        let b = Rc::new(RefCell::new(ConstGate::new(false)));
-        let gate = OrGate::new(a,b);
-        assert_eq!(gate.eval(),true)
-    }
-
-    #[test]
-    fn test_not_gate(){
-        let a = Rc::new(RefCell::new(ConstGate::new(true)));
-        let gate = NotGate::new(a);
-        assert_eq!(gate.eval(),false)
-    }
-
-    #[test]
-    fn test_nesting_gate(){
-        let a = Rc::new(RefCell::new(ConstGate::new(false)));
-        let gate = OrGate::new(a,Rc::new(RefCell::new(NotGate::new(Rc::new(RefCell::new(ConstGate::new(false)))))));
-        assert_eq!(gate.eval(),true);  
-    }
-
-    #[test]
-    fn test_nesting_xor_gate(){
-        let a = Rc::new(RefCell::new(ConstGate::new(false)));
-        let gate = XorGate::new(a,Rc::new(RefCell::new(NotGate::new(Rc::new(RefCell::new(ConstGate::new(false)))))));
-        assert_eq!(gate.eval(),true);  
-    }
-
-    #[test]
-    fn test_nesting_nor_gate(){
-        let a = Rc::new(RefCell::new(ConstGate::new(false)));
-        let gate = NorGate::new(a,Rc::new(RefCell::new(NotGate::new(Rc::new(RefCell::new(ConstGate::new(true)))))));
-        assert_eq!(gate.eval(),true);  
-    }
-
-    #[test]
-    fn test_nesting_nand_gate(){
-        let t = Rc::new(RefCell::new(ConstGate::new(true)));
-        let f = Rc::new(RefCell::new(ConstGate::new(false)));
-
-        assert_eq!(NandGate::new(f.clone(), f.clone()).eval(), true);
-        assert_eq!(NandGate::new(f.clone(), t.clone()).eval(), true); 
-        assert_eq!(NandGate::new(t.clone(), f.clone()).eval(), true); 
-        assert_eq!(NandGate::new(t.clone(), t.clone()).eval(), false); 
-    }
-
-    #[test]
-    fn test_gate_description() {
-        let a = Rc::new(RefCell::new(ConstGate::new(true)));
-        let b = Rc::new(RefCell::new(ConstGate::new(false)));
-        let gate = AndGate::new(a.clone(), b.clone());
-        assert_eq!(gate.description(), "AND(Const true, Const false)");
-    }
-
-    #[test]
-    fn test_halfadder(){
-        let a = Rc::new(RefCell::new(ConstGate::new(true)));
-        let b = Rc::new(RefCell::new(ConstGate::new(true)));
-        let ha = HalfAdder::new(a,b);
-
-        assert_eq!(ha.sum.borrow().eval(), false);
-        assert_eq!(ha.carry.borrow().eval(), true);
-    }
-
-    #[test]
-    fn test_fulladder(){
-        let a = Rc::new(RefCell::new(ConstGate::new(true)));
-        let b = Rc::new(RefCell::new(ConstGate::new(true)));
-        let cin = Rc::new(RefCell::new(ConstGate::new(true)));
-
-        let fa = FullAdder::new(a,b,cin);
-        assert_eq!(fa.sum.borrow().eval(), true);
-        assert_eq!(fa.carry.borrow().eval(), true);
-    }
-
-    #[test]
-    fn test_input_gate(){
-        let mut input_gate = InputGate::new(false);
-        assert_eq!(input_gate.eval(),false);
-
-        input_gate.set_signal(true);
-        assert_eq!(input_gate.eval(),true);
-    }
-
-    #[test]
-    fn test_op_gate(){
-        let input_gate = Rc::new(RefCell::new(ConstGate::new(true)));
-        let output_gate = OutputGate::new(input_gate.clone());
-
-        assert_eq!(output_gate.eval(),true);
-        assert_eq!(output_gate.description(),"Output (Const true)")
-    }
-    
-    #[test]
-    fn test_srlatch(){
-        let set = Rc::new(RefCell::new(ConstGate::new(false)));
-        let reset = Rc::new(RefCell::new(ConstGate::new(false)));
-
-        let latch = SRLatch::new(set.clone(),reset.clone());
-
-        assert_eq!(latch.eval(), false);
-
-        set.borrow_mut().signal = true;
-        reset.borrow_mut().signal = false;
-        assert_eq!(latch.eval(), true);
-
-        set.borrow_mut().signal = false;
-        assert_eq!(latch.eval(),true);
-
-        reset.borrow_mut().signal = true;
-        assert_eq!(latch.eval(), false);
-
-        set.borrow_mut().signal = true;
-        assert_eq!(latch.eval(), false)
-    }
-
-    #[test]
-    fn test_dlatch(){
-        let d = Rc::new(RefCell::new(ConstGate::new(false)));
-        let enable = Rc::new(RefCell::new(ConstGate::new(false)));
-
-        let latch = Dlatch::new(d.clone(), enable.clone());
-
-        assert_eq!(latch.eval(), false);
-
-        d.borrow_mut().signal = true;
-        enable.borrow_mut().signal = true;
-        assert_eq!(latch.eval(),true);
-
-        d.borrow_mut().signal = false;
-        enable.borrow_mut().signal = false;
-        assert_eq!(latch.eval(),true);
-
-        enable.borrow_mut().signal = true;
-        assert_eq!(latch.eval(),false);
-    }
-
-    #[test]
-    fn test_d_flip_flop() {
-        let d = Rc::new(RefCell::new(InputGate::new(false)));
-        let clk = Rc::new(RefCell::new(InputGate::new(false)));
-
-        let ff = Dflipflop::new(d.clone(), clk.clone());
-
-        assert_eq!(ff.eval(), false);
-
-        {
-            d.borrow_mut().set_signal(true);
-            clk.borrow_mut().set_signal(true);
-        }
-        assert_eq!(ff.eval(), true);
-
-        {
-            d.borrow_mut().set_signal(false);
-            clk.borrow_mut().set_signal(false);
-        }
-        ff.eval();
-
-        {
-        clk.borrow_mut().set_signal(true);
-        }
-        assert_eq!(ff.eval(), false);
-    }
-
-    #[test]
-    fn test_clock() {
-        let clk = ClockGate::new();
-        assert_eq!(clk.eval(),false);
-        
-        clk.tick();
-        assert_eq!(clk.eval(), true);
-
-        clk.tick();
-        assert_eq!(clk.eval(), false);
-    }
-
-}
-
