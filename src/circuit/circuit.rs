@@ -3,9 +3,11 @@ use std::rc::Rc;
 use std::cell::{RefCell};
 use serde::{Serialize, Deserialize};
 
-use crate::circuit::gate::Gate;
+use crate::circuit::gate::{Dlatch, Gate, OrGate};
+use crate::circuit::netlist::GateId;
+use crate::circuit::netlist::*;
 use crate::circuit::wire::Wire;
-use super::gate::{AndGate, ConstGate, NotGate, XorGate};
+use super::gate::*;
 use crate::circuit::gate::{FullAdder, HalfAdder, ClockGate, Dflipflop};
 
 
@@ -226,7 +228,6 @@ impl Circuit {
     }
 }
 
-use super::gate::InputGate; 
 
 
 #[cfg(test)]
@@ -401,5 +402,6 @@ mod tests{
         assert_eq!(circuit.eval().get("q"), Some(&true));
     
     }
+
 
 }
