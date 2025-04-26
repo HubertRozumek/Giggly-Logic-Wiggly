@@ -3,11 +3,6 @@ use std::{cell::RefCell, fmt::Debug};
 use std::any::Any;
 
 
-
-// trait implementation
-
-
-
 pub trait Gate: Debug{
     fn eval(&self) -> Signal;
     fn description(&self) -> String;
@@ -15,8 +10,6 @@ pub trait Gate: Debug{
     fn as_any(&mut self) -> &mut dyn Any;
 }
 
-
-// gates structs
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Signal {
@@ -39,15 +32,15 @@ pub struct ButtonGate {
     input: bool,
 }
 
-#[derive(Debug)]
-pub struct LowConstGate {
-    input: bool,
-}
+// #[derive(Debug)]
+// pub struct LowConstGate {
+//     input: Signal,
+// }
 
-#[derive(Debug)]
-pub struct HighConstGate {
-    input: bool,
-}
+// #[derive(Debug)]
+// pub struct HighConstGate {
+//     input: Signal,
+// }
 
 #[derive(Debug)]
 pub struct BufferGate {
@@ -152,8 +145,6 @@ pub struct ClockGate{
 
 
 
-// Constructors
-
 impl Signal {
     #[inline] pub fn is_low(self) -> bool { self == Signal::Low }
     #[inline] pub fn is_high(self) -> bool { self == Signal::High }
@@ -174,12 +165,20 @@ impl From<Signal> for bool {
 
 impl ConstGate {
     pub fn new(level: Signal) -> Self { Self { level } }
+
+pub fn set_level(&mut self, s: Signal) { self.level = s; }
 }
 
 impl SwitchGate {
     pub fn new(init: bool) -> Self {Self { level: init } }
     pub fn toggle(&mut self) { self.level = !self.level; }
 }
+
+impl ButtonGate {
+    pub fn press(&mut self)  { self.input = true; }
+    pub fn release(&mut self){ self.input = false; }
+}
+
 impl BufferGate {
     pub fn new(input: Rc<RefCell<dyn Gate>>) -> Self { Self {input} }
 }
@@ -352,17 +351,17 @@ impl Gate for ButtonGate {
     fn as_any(&mut self) -> &mut dyn Any { self }
 }
 
-impl Gate for LowConstGate {
-    fn eval(&self) -> Signal { Signal::Low }
-    fn description(&self) -> String { "Const 0".into() }
-    fn as_any(&mut self) -> &mut dyn Any { self }
-}
+// impl Gate for LowConstGate {
+//     fn eval(&self) -> Signal { Signal::Low }
+//     fn description(&self) -> String { "Const 0".into() }
+//     fn as_any(&mut self) -> &mut dyn Any { self }
+// }
 
-impl Gate for HighConstGate {
-    fn eval(&self) -> Signal { Signal::High }
-    fn description(&self) -> String { "Const 1".into() }
-    fn as_any(&mut self) -> &mut dyn Any { self }
-}
+// impl Gate for HighConstGate {
+//     fn eval(&self) -> Signal { Signal::High }
+//     fn description(&self) -> String { "Const 1".into() }
+//     fn as_any(&mut self) -> &mut dyn Any { self }
+// }
 impl Gate for BufferGate {
     fn eval(&self) -> Signal { self.input.borrow().eval() }
 

@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
-use serde::{Serialize, Deserialize};
 
 use crate::circuit::gate::Gate;
 use crate::circuit::wire::Wire;
 use super::gate::*;
 use crate::circuit::gate::{FullAdder, HalfAdder, ClockGate};
+use crate::circuit::gate::Signal;
+use serde::{Serialize, Deserialize};
 
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -16,13 +17,19 @@ pub struct Circuit {
     outputs: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+// #[derive(Serialize, Deserialize)]
+// #[serde(tag = "kind")]
+// enum SerGate {
+//     Const   { level: Signal },
+//     Input   { value: Signal },
+// }
 
-struct SerializableGate{
-    gate_type: String,
-    id: String,
-    value: Option<bool>,
-}
+// #[derive(Serialize, Deserialize)]
+// struct SerCircuit {
+//     version: u8,               
+//     gates:   Vec<(String, SerGate)>,
+//     outputs: Vec<String>,
+// }
 
 impl Circuit {
     pub fn new() -> Self {
@@ -44,22 +51,26 @@ impl Circuit {
         self.gates.insert(id.into(), Rc::new(RefCell::new(wire)));
     }
 
-    pub fn set_input_signal(&mut self, gate_id: &str, signal: bool) -> Result<(), String>{
-            if let Some(gate) = self.gates.get(gate_id) {
-                let mut gate_ref = gate.borrow_mut();
-                let any_gate = gate_ref.as_any();
-
-                if let Some(input_gate) = any_gate.downcast_mut::<InputGate>() {
-                    input_gate.set_signal(signal);
+    pub fn set_input(&mut self, gate_id: &str, level: Signal) -> Result<(), String> {
+        match self.gates.get(gate_id) {
+            Some(rc) => {
+                let mut g = rc.borrow_mut();
+                if let Some(inp) = g.as_any().downcast_mut::<InputGate>() {
+                    inp.set_signal(level.is_high());
                     Ok(())
                 } else {
-                    Err(format!("Gate '{}' is not an InputGate", gate_id))
+                    Err(format!("Gate '{gate_id}' is not a InputGate"))
                 }
-
-            } else {
-                Err(format!("Gate '{}' not found", gate_id))
             }
+            None => Err(format!("Gate '{gate_id}' not found")),
         }
+    }
+
+    //old
+    pub fn set_input_bool(&mut self, gate_id: &str, v: bool) -> Result<(), String> {
+        self.set_input(gate_id, if v { Signal::High } else { Signal::Low })
+    }
+
     
     pub fn connect(&mut self, from_gate_id: &str, wire_id: &str) -> Result<(), String> {
         let gate = self.gates.get(from_gate_id)
@@ -170,7 +181,7 @@ impl Circuit {
         for id in &self.outputs {
             if let Some(gate) = self.gates.get(id) {
                 let val = gate.borrow().eval();
-                result.insert(id.clone(),val.into());
+                result.insert(id.clone(),bool::from(val));
             }
         }
         result
@@ -188,40 +199,57 @@ impl Circuit {
             .join("\n")
     }
 
-    // pub fn save(&self,path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    //     let gates: Vec<SerializableGate> = self.gates.iter().map(|(id,gate)|{
-    //         let gate_ref = gate.borrow();
-    //         SerializableGate {
-    //             gate_type: gate_ref.description(),
-    //             id: id.clone(),
-    //             value: Some(gate_ref.eval()),
-    //         }
-    //     }).collect();
+    pub fn gate_mut(&mut self, id: &str) -> Option<&mut Rc<RefCell<dyn Gate>>> {
+        self.gates.get_mut(id)
+    }
 
-    //     let circuit_state = (gates, &self.outputs);
-    //     let json = serde_json::to_string_pretty(&circuit_state)?;
+    pub fn gate(&self, id: &str) -> Option<Rc<RefCell<dyn Gate>>> {
+        self.gates.get(id).cloned()
+    }
+
+    pub fn remove_gate(&mut self, id:&str) {
+        self.gates.remove(id);  
+    }
+
+    // pub fn save(&self, path: &str) -> anyhow::Result<()> {
+    //     let mut vec = Vec::new();
+
+    //     for (id, rc) in &self.gates {
+    //         let mut g = rc.borrow_mut();
+
+    //         if let Some(c) = g.as_any().downcast_ref::<ConstGate>() {
+    //             vec.push((id.clone(), SerGate::Const { level: c.eval() }));
+    //         } else if let Some(inp) = g.as_any().downcast_ref::<InputGate>() {
+    //             vec.push((id.clone(), SerGate::Input { value: inp.eval() }));
+    //         }
+    //     }
+
+    //     let obj = SerCircuit { version: 2, gates: vec, outputs: self.outputs.clone() };
+    //     let json = serde_json::to_string_pretty(&obj)?;
     //     std::fs::write(path, json)?;
     //     Ok(())
     // }
 
-    // pub fn load(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-    //     let content = std::fs::read_to_string(path)?;
-    //     let (gates_data, outputs): (Vec<SerializableGate>, Vec<String>) = serde_json::from_str(&content)?;
+    // pub fn load(path: &str) -> anyhow::Result<Self> {
+    //     let text   = std::fs::read_to_string(path)?;
+    //     let parsed : SerCircuit = serde_json::from_str(&text)?;
 
-    //      let mut circuit = Circuit::new();
-    //      for sg in gates_data {
-    //         match sg.gate_type.as_str() {
-    //             typ if typ.starts_with("Input") => {
-    //                 circuit.add_gate(sg.id, Rc::new(RefCell::new(InputGate::new(sg.value.unwrap()))));  
-    //             },
-    //             typ if typ.starts_with("Const") => {
-    //                 circuit.add_gate(sg.id, Rc::new(RefCell::new(ConstGate::new(sg.value.unwrap()))));
-    //             },
-    //             _ => return Err(format!("Unsuppoorted gate type: {}", sg.gate_type).into()),
-    //      }
-    // }
-    // circuit.outputs = outputs;
+    //     if parsed.version != 2 {
+    //         anyhow::bail!("unsupported file version: {}", parsed.version);
+    //     }
 
-    // Ok(circuit)
+    //     let mut circ = Circuit::new();
+
+    //     for (id, sg) in parsed.gates {
+    //         match sg {
+    //             SerGate::Const { level } =>
+    //                 circ.add_gate(&id, Rc::new(RefCell::new(ConstGate::new(level)))),
+    //             SerGate::Input { value } =>
+    //                 circ.add_gate(&id, Rc::new(RefCell::new(InputGate::new(value.is_high())))),
+    //         }
+    //     }
+
+    //     circ.outputs = parsed.outputs;
+    //     Ok(circ)
     // }
 }

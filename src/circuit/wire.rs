@@ -1,9 +1,9 @@
 use crate::circuit::gate::Gate;
-use std::rc::Rc;
+use crate::circuit::gate::Signal;
+use std::any::Any;
 use std::cell::RefCell;
 use std::fmt::Debug;
-use std::any::Any;
-use crate::circuit::gate::Signal;
+use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct Wire {
@@ -11,9 +11,8 @@ pub struct Wire {
     label: String,
 }
 
-
 impl Wire {
-    pub fn new(label:impl Into<String>) -> Self {
+    pub fn new(label: impl Into<String>) -> Self {
         Self {
             source: None,
             label: label.into(),
@@ -23,7 +22,6 @@ impl Wire {
     pub fn connect(&mut self, gate: Rc<RefCell<dyn Gate>>) {
         self.source = Some(gate);
     }
-
 }
 
 impl Gate for Wire {
@@ -38,7 +36,8 @@ impl Gate for Wire {
         format!(
             "Wire({}, connected: {})",
             self.label,
-            self.source.as_ref()
+            self.source
+                .as_ref()
                 .map(|gate| gate.borrow().description())
                 .unwrap_or("None".to_string())
         )
